@@ -4,6 +4,7 @@ import { spawn } from "child_process";
 import { nanoid } from "nanoid";
 import { fileURLToPath } from "url";
 import { db, uploadsDir, thumbsDir } from "./db.js";
+import { buildPlaybackPackage } from "./transcode.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,15 +43,15 @@ async function generateClip(filename, opts) {
   const out = path.join(uploadsDir, filename);
   if (fs.existsSync(out) && fs.statSync(out).size > 1000) return out;
 
-  const { color, text, duration = 8, pattern = "gradients" } = opts;
+  const { color, text, duration = 8, pattern = "gradients", fps = 30 } = opts;
   const safeText = text.replace(/:/g, "\\:").replace(/'/g, "");
   const draw = `drawtext=text='${safeText}':fontsize=52:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=black@0.45:boxborderw=18`;
 
   const videoInput =
     pattern === "life"
-      ? `life=s=1280x720:mold=0.1:rate=30,format=yuv420p,${draw}`
+      ? `life=s=1280x720:mold=0.1:rate=${fps},format=yuv420p,${draw}`
       : pattern === "plasma"
-        ? `testsrc2=size=1280x720:rate=30,hue=h=${opts.hue || 40},format=yuv420p,${draw}`
+        ? `testsrc2=size=1280x720:rate=${fps},hue=h=${opts.hue || 40},format=yuv420p,${draw}`
         : `gradients=s=1280x720:c0=${color}:c1=0x050505:x0=0:y0=0:x1=1280:y1=720:n=2:seed=42,format=yuv420p,${draw}`;
 
   await run("ffmpeg", [
@@ -65,6 +66,8 @@ async function generateClip(filename, opts) {
     `sine=frequency=440:sample_rate=44100:duration=${duration}`,
     "-t",
     String(duration),
+    "-r",
+    String(fps),
     "-c:v",
     "libx264",
     "-pix_fmt",
@@ -162,6 +165,18 @@ const demos = [
 async function seed() {
   console.log("Seeding Eyebox…");
 
+  for (const dir of ["hls", "subtitles", "audio"]) {
+    const p = path.join(uploadsDir, dir);
+    if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
+    fs.mkdirSync(p, { recursive: true });
+  }
+  db.exec("DELETE FROM video_renditions; DELETE FROM video_subtitles; DELETE FROM video_audio_tracks; DELETE FROM playback_packages;");
+
+  for (const d of demos) {
+    const f = path.join(uploadsDir, `${d.id}.mp4`);
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+  }
+
   const insertChannel = db.prepare(
     `INSERT OR REPLACE INTO channels (id, name, handle, avatar_color, subscribers)
      VALUES (@id, @name, @handle, @avatar_color, @subscribers)`
@@ -189,6 +204,7 @@ async function seed() {
       text: d.text,
       pattern: d.pattern,
       duration: 8 + (i % 3),
+      fps: i === 0 ? 60 : 30,
     });
     const duration = await probeDuration(filePath);
     const thumbnail = await makeThumb(filePath, `${d.id}.jpg`);
@@ -221,6 +237,18 @@ async function seed() {
       "Eyebox player scrub works great with range requests.",
       `-${i + 2} hours`
     );
+
+    console.log(`  packaging playback for ${d.title}…`);
+    await buildPlaybackPackage(d.id, filePath, {
+      title: d.title,
+      fps: i === 0 ? 60 : 30,
+      hdr: i === 0,
+      tier: i === 0 ? "full" : "minimal",
+      withAltAudio: i === 0,
+      withSubtitles: true,
+      withAltCodecs: i === 0,
+      includeUpscale: i === 0,
+    });
   }
 
   console.log("Seed complete. Demo videos are ready to stream.");

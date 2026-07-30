@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, Outlet, useNavigate, useSearchParams } from "react-router-dom";
 import Sidebar from "./Sidebar.jsx";
+import { MiniPlayerBar } from "./VideoPlayer.jsx";
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -97,6 +98,7 @@ export default function Layout() {
           <Outlet />
         </div>
       </div>
+      <MiniPlayerBar />
     </div>
   );
 }

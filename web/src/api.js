@@ -21,6 +21,10 @@ export function fetchVideo(id) {
   return request(`/videos/${id}`);
 }
 
+export function fetchPlayback(id) {
+  return request(`/videos/${id}/playback`);
+}
+
 export function likeVideo(id) {
   return request(`/videos/${id}/like`, { method: "POST" });
 }
