@@ -1,18 +1,25 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { fetchCategories, fetchVideos } from "../api.js";
+import { fetchCategories, fetchHomeFeed, fetchVideos } from "../api.js";
 import VideoCard from "../components/VideoCard.jsx";
+import VideoRow from "../components/VideoRow.jsx";
+import { getViewerSignals } from "../lib/library.js";
+import { useLibrary } from "../hooks/useLibrary.js";
 
 export default function Home() {
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const q = params.get("q") || "";
-  const sort = params.get("sort") || "latest";
+  const sort = params.get("sort") || "";
   const category = params.get("category") || "All";
+  const lib = useLibrary();
 
+  const [sections, setSections] = useState([]);
   const [videos, setVideos] = useState([]);
   const [categories, setCategories] = useState(["All"]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const filteredMode = !!(q || sort || (category && category !== "All"));
 
   useEffect(() => {
     fetchCategories()
@@ -24,69 +31,91 @@ export default function Home() {
     let alive = true;
     setLoading(true);
     setError("");
-    fetchVideos({ q, category, sort })
-      .then((d) => {
-        if (alive) setVideos(d.videos || []);
-      })
-      .catch((err) => {
-        if (alive) setError(err.message);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+
+    if (filteredMode) {
+      fetchVideos({ q, category, sort: sort || "latest" })
+        .then((d) => alive && setVideos(d.videos || []))
+        .catch((err) => alive && setError(err.message))
+        .finally(() => alive && setLoading(false));
+      return () => {
+        alive = false;
+      };
+    }
+
+    const signals = getViewerSignals();
+    fetchHomeFeed({
+      ...signals,
+      continueIds: lib.continueWatching.map((c) => c.id),
+      watchLaterIds: lib.watchLater.map((w) => w.id),
+    })
+      .then((d) => alive && setSections(d.sections || []))
+      .catch((err) => alive && setError(err.message))
+      .finally(() => alive && setLoading(false));
+
     return () => {
       alive = false;
     };
-  }, [q, category, sort]);
+  }, [filteredMode, q, category, sort, lib.continueWatching, lib.watchLater]);
 
-  function setCategory(next) {
-    const p = new URLSearchParams(params);
-    if (next === "All") p.delete("category");
-    else p.set("category", next);
-    setParams(p);
+  const progressMap = Object.fromEntries(
+    lib.continueWatching.map((c) => [c.id, c.progress])
+  );
+
+  if (filteredMode) {
+    return (
+      <main className="page">
+        <div className="page-hero">
+          <div>
+            <h1>
+              {q ? `Results for “${q}”` : sort === "popular" ? "Trending" : category !== "All" ? category : "Browse"}
+            </h1>
+          </div>
+        </div>
+        {loading && <div className="loading">Loading…</div>}
+        {error && <div className="error">{error}</div>}
+        <div className="video-grid">
+          {videos.map((v) => (
+            <VideoCard key={v.id} video={v} progress={progressMap[v.id]} />
+          ))}
+        </div>
+      </main>
+    );
   }
 
   return (
-    <main className="page">
+    <main className="page page-home">
       <div className="page-hero">
         <div>
-          <h1>{q ? `Results for “${q}”` : "Watch anything"}</h1>
-          <p>
-            Free self-hosted streaming with Range-request playback. Browse demos
-            or upload your own clips.
-          </p>
+          <h1>Home</h1>
+          <p>Your personalized feed — trending, recommendations, and Shorts.</p>
         </div>
       </div>
 
       <div className="chips" role="tablist" aria-label="Categories">
         {categories.map((c) => (
-          <button
+          <a
             key={c}
-            type="button"
+            href={c === "All" ? "/browse" : `/browse/${encodeURIComponent(c)}`}
             className={`chip ${category === c ? "active" : ""}`}
-            onClick={() => setCategory(c)}
           >
             {c}
-          </button>
+          </a>
         ))}
       </div>
 
-      {loading && <div className="loading">Loading stream library…</div>}
-      {error && (
-        <div className="error">
-          Couldn’t reach the streaming server. Is it running on port 4000?
-          <br />
-          {error}
-        </div>
-      )}
-      {!loading && !error && videos.length === 0 && (
-        <div className="empty">No videos yet. Upload one to get started.</div>
-      )}
-      <div className="video-grid">
-        {videos.map((v) => (
-          <VideoCard key={v.id} video={v} />
-        ))}
-      </div>
+      {loading && <div className="loading">Building your feed…</div>}
+      {error && <div className="error">{error}</div>}
+
+      {sections.map((section) => (
+        <VideoRow
+          key={section.id}
+          title={section.title}
+          videos={section.videos}
+          href={section.href}
+          badge={section.badge}
+          progressMap={section.id === "continue" ? progressMap : undefined}
+        />
+      ))}
     </main>
   );
 }

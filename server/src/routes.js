@@ -1,4 +1,5 @@
 import { Router } from "express";
+import express from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
 import path from "path";
@@ -6,8 +7,25 @@ import fs from "fs";
 import { spawn } from "child_process";
 import { db, uploadsDir, thumbsDir } from "./db.js";
 import { streamVideo } from "./stream.js";
+import { buildPlaybackPackage, loadPlaybackFromDb } from "./transcode.js";
+import discoverRouter, { mapVideo, buildVideoFilters, videoSelect } from "./discover.js";
+import { rankVideos } from "./recommendations.js";
 
 const router = Router();
+
+router.use(
+  "/hls",
+  express.static(path.join(uploadsDir, "hls"), {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith(".m3u8")) {
+        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+      } else if (filePath.endsWith(".ts")) {
+        res.setHeader("Content-Type", "video/mp2t");
+      }
+      res.setHeader("Cache-Control", "public, max-age=31536000");
+    },
+  })
+);
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
@@ -59,74 +77,91 @@ function makeThumbnail(videoPath, thumbName) {
   });
 }
 
-function mapVideo(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    title: row.title,
-    description: row.description,
-    duration: row.duration,
-    views: row.views,
-    likes: row.likes,
-    category: row.category,
-    createdAt: row.created_at,
-    streamUrl: `/api/stream/${row.id}`,
-    thumbnailUrl: row.thumbnail ? `/api/thumbs/${row.thumbnail}` : null,
-    channel: {
-      id: row.channel_id,
-      name: row.channel_name,
-      handle: row.channel_handle,
-      avatarColor: row.avatar_color,
-      subscribers: row.subscribers,
-    },
-  };
-}
-
-const videoSelect = `
-  SELECT v.*,
-    c.name AS channel_name,
-    c.handle AS channel_handle,
-    c.avatar_color AS avatar_color,
-    c.subscribers AS subscribers
-  FROM videos v
-  JOIN channels c ON c.id = v.channel_id
-`;
+router.use("/discover", discoverRouter);
 
 router.get("/health", (_req, res) => {
   res.json({ ok: true, service: "eyebox-stream" });
 });
 
-router.get("/videos", (req, res) => {
-  const q = (req.query.q || "").toString().trim();
-  const category = (req.query.category || "").toString().trim();
-  const sort = (req.query.sort || "latest").toString();
-  const limit = Math.min(parseInt(req.query.limit || "48", 10) || 48, 100);
-
-  let where = "WHERE 1=1";
-  const params = [];
-
-  if (q) {
-    where += " AND (v.title LIKE ? OR v.description LIKE ? OR c.name LIKE ?)";
-    const like = `%${q}%`;
-    params.push(like, like, like);
-  }
-  if (category && category !== "All") {
-    where += " AND v.category = ?";
-    params.push(category);
-  }
-
-  const order =
-    sort === "popular"
-      ? "ORDER BY v.views DESC, v.created_at DESC"
-      : sort === "liked"
-        ? "ORDER BY v.likes DESC, v.created_at DESC"
-        : "ORDER BY v.created_at DESC";
-
+router.get("/videos/batch", (req, res) => {
+  const ids = (req.query.ids || "")
+    .toString()
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+  if (!ids.length) return res.json({ videos: [] });
+  const placeholders = ids.map(() => "?").join(",");
   const rows = db
-    .prepare(`${videoSelect} ${where} ${order} LIMIT ?`)
-    .all(...params, limit);
+    .prepare(`${videoSelect} WHERE v.id IN (${placeholders})`)
+    .all(...ids);
+  const byId = new Map(rows.map((r) => [r.id, mapVideo(r)]));
+  res.json({ videos: ids.map((id) => byId.get(id)).filter(Boolean) });
+});
 
+router.get("/videos", (req, res) => {
+  const { where, params, order } = buildVideoFilters(req.query);
+  const limit = Math.min(parseInt(req.query.limit || "48", 10) || 48, 100);
+  const rows = db.prepare(`${videoSelect} ${where} ${order} LIMIT ?`).all(...params, limit);
   res.json({ videos: rows.map(mapVideo) });
+});
+
+function mapPlayback(videoId) {
+  const data = loadPlaybackFromDb(videoId);
+  const pkg = data.package;
+  if (!pkg?.has_hls) {
+    return {
+      adaptive: false,
+      streamUrl: `/api/stream/${videoId}`,
+      renditions: [],
+      subtitles: [],
+      audioTracks: [],
+      maxFps: 30,
+      hdr: false,
+    };
+  }
+
+  return {
+    adaptive: true,
+    hlsUrl: `/api/hls/${videoId}/master.m3u8`,
+    streamUrl: `/api/stream/${videoId}`,
+    maxFps: pkg.max_fps,
+    hdr: !!pkg.hdr,
+    renditions: data.renditions.map((r) => ({
+      id: r.id,
+      quality: r.quality,
+      width: r.width,
+      height: r.height,
+      fps: r.fps,
+      codec: r.codec,
+      hdr: !!r.hdr,
+      bitrate: r.bitrate,
+      hlsPlaylist: r.hls_playlist ? `/api/${r.hls_playlist}` : null,
+      streamUrl: r.filename
+        ? `/api/stream-file/${videoId}/${r.codec}/${r.quality}`
+        : null,
+    })),
+    subtitles: data.subtitles.map((s) => ({
+      id: s.id,
+      language: s.language,
+      label: s.label,
+      kind: s.kind,
+      url: `/api/subtitles/${videoId}/${s.vtt_file}`,
+    })),
+    audioTracks: data.audioTracks.map((a) => ({
+      id: a.id,
+      language: a.language,
+      label: a.label,
+      isDefault: !!a.is_default,
+      url: `/api/audio/${videoId}/${a.filename}`,
+    })),
+  };
+}
+
+router.get("/videos/:id/playback", (req, res) => {
+  const video = db.prepare("SELECT id FROM videos WHERE id = ?").get(req.params.id);
+  if (!video) return res.status(404).json({ error: "Video not found" });
+  res.json(mapPlayback(req.params.id));
 });
 
 router.get("/videos/:id", (req, res) => {
@@ -143,16 +178,11 @@ router.get("/videos/:id", (req, res) => {
     )
     .all(req.params.id);
 
-  const related = db
-    .prepare(
-      `${videoSelect}
-       WHERE v.id != ? AND (v.category = ? OR v.channel_id = ?)
-       ORDER BY v.views DESC LIMIT 12`
-    )
-    .all(req.params.id, updated.category, updated.channel_id)
-    .map(mapVideo);
+  const allRows = db.prepare(videoSelect).all();
+  const relatedRows = rankVideos(allRows, { seedVideos: [updated], excludeIds: [req.params.id] }, 12);
+  const related = relatedRows.map(mapVideo);
 
-  res.json({ video: mapVideo(updated), comments, related });
+  res.json({ video: mapVideo(updated), comments, related, relatedPoweredBy: "eyebox-ai" });
 });
 
 router.post("/videos/:id/like", (req, res) => {
@@ -252,6 +282,15 @@ router.post("/upload", upload.single("video"), async (req, res) => {
     );
 
     const row = db.prepare(`${videoSelect} WHERE v.id = ?`).get(videoId);
+
+    buildPlaybackPackage(videoId, filePath, {
+      title,
+      tier: "standard",
+      withAltAudio: true,
+      withSubtitles: true,
+      withAltCodecs: false,
+    }).catch((err) => console.error("Transcode failed:", err));
+
     res.status(201).json({ video: mapVideo(row) });
   } catch (err) {
     console.error(err);
@@ -263,6 +302,40 @@ router.get("/stream/:id", (req, res) => {
   const video = db.prepare("SELECT filename FROM videos WHERE id = ?").get(req.params.id);
   if (!video) return res.status(404).json({ error: "Video not found" });
   streamVideo(req, res, video.filename);
+});
+
+router.get("/stream-file/:videoId/:codec/:quality", (req, res) => {
+  const row = db
+    .prepare(
+      `SELECT filename FROM video_renditions
+       WHERE video_id = ? AND codec = ? AND quality = ? AND filename IS NOT NULL`
+    )
+    .get(req.params.videoId, req.params.codec, req.params.quality);
+  if (!row) return res.status(404).json({ error: "Rendition not found" });
+  streamVideo(req, res, row.filename);
+});
+
+router.get("/subtitles/:videoId/:file", (req, res) => {
+  const filePath = path.join(
+    uploadsDir,
+    "subtitles",
+    req.params.videoId,
+    path.basename(req.params.file)
+  );
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.setHeader("Content-Type", "text/vtt; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.sendFile(filePath);
+});
+
+router.get("/audio/:videoId/:file", (req, res) => {
+  const name = path.basename(req.params.file);
+  const filePath = path.join(uploadsDir, "audio", name);
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.setHeader("Content-Type", "audio/mp4");
+  const stat = fs.statSync(filePath);
+  res.setHeader("Content-Length", stat.size);
+  fs.createReadStream(filePath).pipe(res);
 });
 
 router.get("/thumbs/:name", (req, res) => {
