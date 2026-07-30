@@ -13,7 +13,7 @@ export default function Layout() {
   function onSearch(e) {
     e.preventDefault();
     const query = q.trim();
-    navigate(query ? `/?q=${encodeURIComponent(query)}` : "/");
+    navigate(query ? `/search?q=${encodeURIComponent(query)}` : "/search");
   }
 
   function toggleSidebar() {

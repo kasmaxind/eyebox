@@ -9,12 +9,50 @@ async function request(path, options = {}) {
   return res.json();
 }
 
-export function fetchVideos({ q = "", category = "All", sort = "latest" } = {}) {
+function toParams(obj) {
   const params = new URLSearchParams();
-  if (q) params.set("q", q);
-  if (category) params.set("category", category);
-  if (sort) params.set("sort", sort);
-  return request(`/videos?${params}`);
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined && v !== null && v !== "" && v !== "All") params.set(k, v);
+  }
+  return params;
+}
+
+export function fetchVideos(filters = {}) {
+  return request(`/videos?${toParams(filters)}`);
+}
+
+export function searchVideos(filters = {}) {
+  return request(`/discover/search?${toParams(filters)}`);
+}
+
+export function fetchHomeFeed(signals = {}) {
+  return request("/discover/home", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(signals),
+  });
+}
+
+export function fetchTrending() {
+  return request("/discover/trending");
+}
+
+export function fetchExplore() {
+  return request("/discover/explore");
+}
+
+export function fetchShorts(limit = 24) {
+  return request(`/discover/shorts?limit=${limit}`);
+}
+
+export function fetchRecommendations(forId) {
+  const q = forId ? `?for=${encodeURIComponent(forId)}` : "";
+  return request(`/discover/recommendations${q}`);
+}
+
+export function fetchVideosBatch(ids) {
+  if (!ids.length) return Promise.resolve({ videos: [] });
+  return request(`/videos/batch?ids=${ids.join(",")}`);
 }
 
 export function fetchVideo(id) {

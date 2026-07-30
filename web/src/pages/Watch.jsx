@@ -11,6 +11,8 @@ import {
 } from "../api.js";
 import VideoPlayer from "../components/VideoPlayer.jsx";
 import { usePlayer } from "../context/PlayerContext.jsx";
+import { addToPlaylist, isWatchLater, recordWatch, toggleWatchLater } from "../lib/library.js";
+import { useLibrary } from "../hooks/useLibrary.js";
 
 export default function Watch() {
   const { id } = useParams();
@@ -24,6 +26,8 @@ export default function Watch() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [theaterMode, setTheaterMode] = useState(false);
+  const [savedLater, setSavedLater] = useState(false);
+  const lib = useLibrary();
 
   useEffect(() => {
     let alive = true;
@@ -36,6 +40,8 @@ export default function Watch() {
         setPlayback(pb);
         setLikes(d.video.likes);
         setComments(d.comments || []);
+        recordWatch(d.video, 0);
+        setSavedLater(isWatchLater(d.video.id));
       })
       .catch((err) => alive && setError(err.message))
       .finally(() => alive && setLoading(false));
@@ -75,6 +81,16 @@ export default function Watch() {
       currentTime: 0,
       playing: true,
     });
+  }
+
+  function onWatchLater() {
+    if (!data?.video) return;
+    const added = toggleWatchLater(data.video);
+    setSavedLater(added);
+  }
+
+  function onSavePlaylist(playlistId) {
+    if (data?.video) addToPlaylist(playlistId, data.video);
   }
 
   if (loading) return <main className="page"><div className="loading">Opening stream…</div></main>;
@@ -122,6 +138,29 @@ export default function Watch() {
               <button type="button" className="btn btn-ghost" onClick={onLike}>
                 ♥ {formatViews(likes)}
               </button>
+              <button
+                type="button"
+                className={`btn btn-ghost ${savedLater ? "active-save" : ""}`}
+                onClick={onWatchLater}
+              >
+                {savedLater ? "✓ Saved" : "Watch later"}
+              </button>
+              {lib.playlists.length > 0 && (
+                <select
+                  className="playlist-save-select"
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) onSavePlaylist(e.target.value);
+                    e.target.value = "";
+                  }}
+                  aria-label="Save to playlist"
+                >
+                  <option value="">Save to playlist…</option>
+                  {lib.playlists.map((pl) => (
+                    <option key={pl.id} value={pl.id}>{pl.name}</option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {video.description && (
@@ -179,7 +218,10 @@ export default function Watch() {
 
         {!theaterMode && (
           <aside className="related">
-            <h2>Up next</h2>
+            <h2>
+              Related videos
+              {data.relatedPoweredBy && <span className="ai-tag">{data.relatedPoweredBy}</span>}
+            </h2>
             {related.map((r) => (
               <Link key={r.id} to={`/watch/${r.id}`} className="related-item">
                 <div className="thumb-wrap">

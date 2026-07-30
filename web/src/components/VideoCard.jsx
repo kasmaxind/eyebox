@@ -1,16 +1,24 @@
 import { Link } from "react-router-dom";
 import { formatDuration, formatViews, timeAgo } from "../api.js";
 
-export default function VideoCard({ video, style }) {
+export default function VideoCard({ video, style, progress }) {
+  const pct = progress && video.duration ? Math.min(100, (progress / video.duration) * 100) : 0;
+
   return (
-    <Link to={`/watch/${video.id}`} className="video-card" style={style}>
+    <Link to={video.isShort ? `/shorts?v=${video.id}` : `/watch/${video.id}`} className="video-card" style={style}>
       <div className="thumb-wrap">
         {video.thumbnailUrl ? (
           <img src={video.thumbnailUrl} alt="" loading="lazy" />
         ) : (
           <div className="thumb-fallback" />
         )}
+        {video.isShort && <span className="short-badge">Short</span>}
         <span className="duration">{formatDuration(video.duration)}</span>
+        {pct > 0 && (
+          <div className="watch-progress">
+            <span style={{ width: `${pct}%` }} />
+          </div>
+        )}
       </div>
       <div className="card-meta">
         <div
