@@ -51,6 +51,49 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_videos_views ON videos(views DESC);
   CREATE INDEX IF NOT EXISTS idx_comments_video ON comments(video_id);
+
+  CREATE TABLE IF NOT EXISTS playback_packages (
+    video_id TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    hls_master TEXT,
+    max_fps INTEGER NOT NULL DEFAULT 30,
+    hdr INTEGER NOT NULL DEFAULT 0,
+    has_hls INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS video_renditions (
+    id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    quality TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    fps INTEGER NOT NULL DEFAULT 30,
+    codec TEXT NOT NULL DEFAULT 'h264',
+    hdr INTEGER NOT NULL DEFAULT 0,
+    bitrate INTEGER NOT NULL DEFAULT 0,
+    filename TEXT,
+    hls_playlist TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS video_subtitles (
+    id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    language TEXT NOT NULL,
+    label TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'manual',
+    vtt_file TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS video_audio_tracks (
+    id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    language TEXT NOT NULL,
+    label TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_renditions_video ON video_renditions(video_id);
+  CREATE INDEX IF NOT EXISTS idx_subtitles_video ON video_subtitles(video_id);
 `);
 
 export { db, uploadsDir, thumbsDir, dataDir };
