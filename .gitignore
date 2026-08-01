@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Uploads & media
+uploads/
+temp/
+media/
+*.mp4
+*.webm
+!public/**
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Docker volumes
+data/
+mongo-data/
+redis-data/
+
+# Misc
+*.pem
+.cache/
+.turbo/

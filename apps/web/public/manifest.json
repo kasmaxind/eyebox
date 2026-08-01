@@ -1,0 +1,19 @@
+{
+  "name": "EYEBOX TUBE.AI",
+  "short_name": "EYEBOX",
+  "description": "AI-powered video streaming platform",
+  "start_url": "/home",
+  "display": "standalone",
+  "background_color": "#070A12",
+  "theme_color": "#00E5FF",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["entertainment", "video"]
+}

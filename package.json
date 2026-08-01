@@ -1,0 +1,30 @@
+{
+  "name": "eyebox-tube-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "EYEBOX TUBE.AI — Production-ready AI-powered video streaming platform",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @eyebox/api\" \"npm run dev -w @eyebox/web\"",
+    "dev:api": "npm run dev -w @eyebox/api",
+    "dev:web": "npm run dev -w @eyebox/web",
+    "build": "npm run build -w @eyebox/api && npm run build -w @eyebox/web",
+    "build:api": "npm run build -w @eyebox/api",
+    "build:web": "npm run build -w @eyebox/web",
+    "start": "concurrently -n api,web -c cyan,magenta \"npm run start -w @eyebox/api\" \"npm run start -w @eyebox/web\"",
+    "lint": "npm run lint -w @eyebox/api && npm run lint -w @eyebox/web",
+    "test": "npm run test -w @eyebox/api --if-present && npm run test -w @eyebox/web --if-present",
+    "seed": "npm run seed -w @eyebox/api",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
