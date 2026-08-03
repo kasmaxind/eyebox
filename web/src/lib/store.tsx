@@ -6,7 +6,9 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -16,7 +18,17 @@ type MiniPlayer = {
   playing: boolean;
 } | null;
 
-type StoreState = {
+type Persisted = {
+  liked: string[];
+  disliked: string[];
+  watchLater: string[];
+  subscribed: string[];
+  history: string[];
+  progress: Record<string, number>;
+  sidebarCollapsed: boolean;
+};
+
+type StoreApi = {
   liked: Set<string>;
   disliked: Set<string>;
   watchLater: Set<string>;
@@ -26,9 +38,6 @@ type StoreState = {
   miniPlayer: MiniPlayer;
   sidebarCollapsed: boolean;
   notificationsOpen: boolean;
-};
-
-type StoreApi = StoreState & {
   toggleLike: (id: string) => void;
   toggleDislike: (id: string) => void;
   toggleWatchLater: (id: string) => void;
@@ -43,137 +52,164 @@ type StoreApi = StoreState & {
 };
 
 const StoreContext = createContext<StoreApi | null>(null);
-
 const STORAGE_KEY = "eyebox-store-v1";
 
-function loadInitial(): Partial<StoreState> {
-  if (typeof window === "undefined") return {};
+const defaults: Persisted = {
+  liked: ["v1", "v8"],
+  disliked: [],
+  watchLater: ["v4", "v9"],
+  subscribed: ["ch-nebula", "ch-pulse", "ch-arena", "ch-byte"],
+  history: ["v1", "v2", "v7", "v8", "v10"],
+  progress: { v1: 0.42, v2: 0.18, v7: 0.67 },
+  sidebarCollapsed: false,
+};
+
+let memory: Persisted = defaults;
+const listeners = new Set<() => void>();
+
+function emit() {
+  listeners.forEach((l) => l());
+}
+
+function readFromStorage(): Persisted {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as {
-      liked?: string[];
-      disliked?: string[];
-      watchLater?: string[];
-      subscribed?: string[];
-      history?: string[];
-      progress?: Record<string, number>;
-      sidebarCollapsed?: boolean;
-    };
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<Persisted>;
     return {
-      liked: new Set(parsed.liked ?? ["v1", "v8"]),
-      disliked: new Set(parsed.disliked ?? []),
-      watchLater: new Set(parsed.watchLater ?? ["v4", "v9"]),
-      subscribed: new Set(parsed.subscribed ?? ["ch-nebula", "ch-pulse", "ch-arena", "ch-byte"]),
-      history: parsed.history ?? ["v1", "v2", "v7", "v8", "v10"],
-      progress: parsed.progress ?? { v1: 0.42, v2: 0.18, v7: 0.67 },
-      sidebarCollapsed: parsed.sidebarCollapsed ?? false,
+      liked: parsed.liked ?? defaults.liked,
+      disliked: parsed.disliked ?? defaults.disliked,
+      watchLater: parsed.watchLater ?? defaults.watchLater,
+      subscribed: parsed.subscribed ?? defaults.subscribed,
+      history: parsed.history ?? defaults.history,
+      progress: parsed.progress ?? defaults.progress,
+      sidebarCollapsed: parsed.sidebarCollapsed ?? defaults.sidebarCollapsed,
     };
   } catch {
-    return {};
+    return defaults;
   }
 }
 
+function commit(next: Persisted) {
+  memory = next;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore quota */
+  }
+  emit();
+}
+
+function getSnapshot(): Persisted {
+  return memory;
+}
+
+function getServerSnapshot(): Persisted {
+  return defaults;
+}
+
+function subscribe(onChange: () => void) {
+  listeners.add(onChange);
+  if (listeners.size === 1 && typeof window !== "undefined") {
+    memory = readFromStorage();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY) {
+        memory = readFromStorage();
+        emit();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      listeners.delete(onChange);
+      window.removeEventListener("storage", onStorage);
+    };
+  }
+  return () => {
+    listeners.delete(onChange);
+  };
+}
+
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const [liked, setLiked] = useState<Set<string>>(() => new Set(["v1", "v8"]));
-  const [disliked, setDisliked] = useState<Set<string>>(() => new Set());
-  const [watchLater, setWatchLater] = useState<Set<string>>(() => new Set(["v4", "v9"]));
-  const [subscribed, setSubscribed] = useState<Set<string>>(
-    () => new Set(["ch-nebula", "ch-pulse", "ch-arena", "ch-byte"]),
-  );
-  const [history, setHistory] = useState<string[]>(["v1", "v2", "v7", "v8", "v10"]);
-  const [progress, setProgressMap] = useState<Record<string, number>>({
-    v1: 0.42,
-    v2: 0.18,
-    v7: 0.67,
-  });
+  const persisted = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const [liveProgress, setLiveProgress] = useState<Record<string, number> | null>(null);
   const [miniPlayer, setMiniPlayer] = useState<MiniPlayer>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
+  const progressRef = useRef(persisted.progress);
 
   useEffect(() => {
-    const initial = loadInitial();
-    if (initial.liked) setLiked(initial.liked);
-    if (initial.disliked) setDisliked(initial.disliked);
-    if (initial.watchLater) setWatchLater(initial.watchLater);
-    if (initial.subscribed) setSubscribed(initial.subscribed);
-    if (initial.history) setHistory(initial.history);
-    if (initial.progress) setProgressMap(initial.progress);
-    if (typeof initial.sidebarCollapsed === "boolean") setSidebarCollapsed(initial.sidebarCollapsed);
-    setHydrated(true);
+    progressRef.current = liveProgress ?? persisted.progress;
+  }, [liveProgress, persisted.progress]);
+
+  const patch = useCallback((partial: Partial<Persisted>) => {
+    commit({ ...memory, progress: progressRef.current, ...partial });
   }, []);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        liked: [...liked],
-        disliked: [...disliked],
-        watchLater: [...watchLater],
-        subscribed: [...subscribed],
-        history,
-        progress,
-        sidebarCollapsed,
-      }),
-    );
-  }, [liked, disliked, watchLater, subscribed, history, progress, sidebarCollapsed, hydrated]);
+  const toggleLike = useCallback(
+    (id: string) => {
+      const liked = new Set(memory.liked);
+      if (liked.has(id)) liked.delete(id);
+      else liked.add(id);
+      patch({ liked: [...liked], disliked: memory.disliked.filter((x) => x !== id) });
+    },
+    [patch],
+  );
 
-  const toggleLike = useCallback((id: string) => {
-    setLiked((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    setDisliked((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }, []);
+  const toggleDislike = useCallback(
+    (id: string) => {
+      const disliked = new Set(memory.disliked);
+      if (disliked.has(id)) disliked.delete(id);
+      else disliked.add(id);
+      patch({ disliked: [...disliked], liked: memory.liked.filter((x) => x !== id) });
+    },
+    [patch],
+  );
 
-  const toggleDislike = useCallback((id: string) => {
-    setDisliked((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    setLiked((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }, []);
+  const toggleWatchLater = useCallback(
+    (id: string) => {
+      const watchLater = new Set(memory.watchLater);
+      if (watchLater.has(id)) watchLater.delete(id);
+      else watchLater.add(id);
+      patch({ watchLater: [...watchLater] });
+    },
+    [patch],
+  );
 
-  const toggleWatchLater = useCallback((id: string) => {
-    setWatchLater((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+  const toggleSubscribe = useCallback(
+    (channelId: string) => {
+      const subscribed = new Set(memory.subscribed);
+      if (subscribed.has(channelId)) subscribed.delete(channelId);
+      else subscribed.add(channelId);
+      patch({ subscribed: [...subscribed] });
+    },
+    [patch],
+  );
 
-  const toggleSubscribe = useCallback((channelId: string) => {
-    setSubscribed((prev) => {
-      const next = new Set(prev);
-      if (next.has(channelId)) next.delete(channelId);
-      else next.add(channelId);
-      return next;
-    });
-  }, []);
-
-  const addHistory = useCallback((id: string) => {
-    setHistory((prev) => [id, ...prev.filter((x) => x !== id)].slice(0, 40));
-  }, []);
+  const addHistory = useCallback(
+    (id: string) => {
+      patch({
+        history: [id, ...memory.history.filter((x) => x !== id)].slice(0, 40),
+      });
+    },
+    [patch],
+  );
 
   const setProgress = useCallback((id: string, ratio: number) => {
-    setProgressMap((prev) => ({ ...prev, [id]: Math.min(1, Math.max(0, ratio)) }));
+    const next = Math.min(1, Math.max(0, ratio));
+    setLiveProgress((prev) => {
+      const base = prev ?? memory.progress;
+      if (Math.abs((base[id] ?? 0) - next) < 0.012) return prev;
+      const updated = { ...base, [id]: next };
+      progressRef.current = updated;
+      return updated;
+    });
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!progressRef.current) return;
+      commit({ ...memory, progress: progressRef.current });
+    }, 3000);
+    return () => window.clearInterval(id);
   }, []);
 
   const openMiniPlayer = useCallback((videoId: string, currentTime = 0) => {
@@ -182,20 +218,24 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const closeMiniPlayer = useCallback(() => setMiniPlayer(null), []);
 
-  const updateMiniPlayer = useCallback((patch: Partial<NonNullable<MiniPlayer>>) => {
-    setMiniPlayer((prev) => (prev ? { ...prev, ...patch } : prev));
+  const updateMiniPlayer = useCallback((p: Partial<NonNullable<MiniPlayer>>) => {
+    setMiniPlayer((prev) => (prev ? { ...prev, ...p } : prev));
   }, []);
+
+  const setSidebarCollapsed = useCallback((v: boolean) => patch({ sidebarCollapsed: v }), [patch]);
+
+  const progress = liveProgress ?? persisted.progress;
 
   const value = useMemo<StoreApi>(
     () => ({
-      liked,
-      disliked,
-      watchLater,
-      subscribed,
-      history,
+      liked: new Set(persisted.liked),
+      disliked: new Set(persisted.disliked),
+      watchLater: new Set(persisted.watchLater),
+      subscribed: new Set(persisted.subscribed),
+      history: persisted.history,
       progress,
       miniPlayer,
-      sidebarCollapsed,
+      sidebarCollapsed: persisted.sidebarCollapsed,
       notificationsOpen,
       toggleLike,
       toggleDislike,
@@ -210,14 +250,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setNotificationsOpen,
     }),
     [
-      liked,
-      disliked,
-      watchLater,
-      subscribed,
-      history,
+      persisted,
       progress,
       miniPlayer,
-      sidebarCollapsed,
       notificationsOpen,
       toggleLike,
       toggleDislike,
@@ -228,6 +263,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       openMiniPlayer,
       closeMiniPlayer,
       updateMiniPlayer,
+      setSidebarCollapsed,
     ],
   );
 
