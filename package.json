@@ -1,0 +1,12 @@
+{
+  "name": "eyebox",
+  "private": true,
+  "version": "1.0.0",
+  "description": "EyeBox — YouTube-like video platform",
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "npm --prefix web run start",
+    "lint": "npm --prefix web run lint"
+  }
+}
