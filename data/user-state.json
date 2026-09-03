@@ -1,14 +1,30 @@
 {
-  "favorites": [],
+  "favorites": [
+    "neon-tide"
+  ],
   "playlists": [
+    {
+      "id": "pl-mtlil13b",
+      "name": "Night Bus",
+      "description": "Late rides",
+      "videoIds": [],
+      "createdAt": "2026-09-03T12:41:41.831Z",
+      "updatedAt": "2026-09-03T12:41:41.831Z"
+    },
     {
       "id": "evening-drive",
       "name": "Evening Drive",
       "description": "Warm chrome and open road visuals.",
-      "videoIds": ["neon-tide", "coastline-fm", "amber-static"],
+      "videoIds": [
+        "neon-tide",
+        "coastline-fm",
+        "amber-static"
+      ],
       "createdAt": "2026-09-03T12:00:00.000Z",
       "updatedAt": "2026-09-03T12:00:00.000Z"
     }
   ],
-  "recentlyWatched": []
+  "recentlyWatched": [
+    "neon-tide"
+  ]
 }
