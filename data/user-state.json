@@ -1,0 +1,14 @@
+{
+  "favorites": [],
+  "playlists": [
+    {
+      "id": "evening-drive",
+      "name": "Evening Drive",
+      "description": "Warm chrome and open road visuals.",
+      "videoIds": ["neon-tide", "coastline-fm", "amber-static"],
+      "createdAt": "2026-09-03T12:00:00.000Z",
+      "updatedAt": "2026-09-03T12:00:00.000Z"
+    }
+  ],
+  "recentlyWatched": []
+}
