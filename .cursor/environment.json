@@ -1,0 +1,4 @@
+{
+  "name": "eyebox",
+  "install": "bash scripts/cloud-agent-install.sh"
+}
